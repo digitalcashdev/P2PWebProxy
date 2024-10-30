@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+supervisor=supervise-daemon
+
+name='dash-p2pwebproxy service'
+description='Proxies Dash MN P2P network via WebSocket'
+
+source /home/app/.config/dash-p2pwebproxy/env
+command='/home/app/bin/dash-p2pwebproxy'
+command_args='--port 3080 --testnet'
+command_user='app:app'
+supervise_daemon_args='--chdir /home/app/srv/dash-p2pwebproxy --env PATH=/home/app/.local/opt/dashcore/bin:/home/app/bin:/home/app/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+output_log=/var/log/dash-p2pwebproxy.log
+error_log=/var/log/dash-p2pwebproxy.log
+
+start_pre() {
+    checkpath --file --owner app:app --mode 0640 \
+        /var/log/dash-p2pwebproxy.log
+}
+
+depend() {
+    need net
+}
