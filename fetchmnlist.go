@@ -7,16 +7,33 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
-type MasternodeResponse map[string]struct {
-	Address          string `json:"address"`
-	Status           string `json:"status"`
-	PlatformP2PPort  int    `json:"platformP2PPort"`
-	PlatformHTTPPort int    `json:"platformHTTPPort"`
+type MasternodeResponse struct {
+	Result map[string]MasternodeInfo `json:"result"`
 }
 
-func fetchAllowedList(baseURL, user, pass string) (map[string][]string, error) {
+type MasternodeInfo struct {
+	ProTxHash           string `json:"proTxHash"`
+	Address             string `json:"address"`
+	Payee               string `json:"payee"`
+	Status              string `json:"status"`
+	Type                string `json:"type"`
+	PlatformNodeID      string `json:"platformNodeID"`
+	PlatformP2PPort     int    `json:"platformP2PPort"`
+	PlatformHTTPPort    int    `json:"platformHTTPPort"`
+	Pospenaltyscore     int    `json:"pospenaltyscore"`
+	ConsecutivePayments int    `json:"consecutivePayments"`
+	Lastpaidtime        int    `json:"lastpaidtime"`
+	Lastpaidblock       int    `json:"lastpaidblock"`
+	Owneraddress        string `json:"owneraddress"`
+	Votingaddress       string `json:"votingaddress"`
+	Collateraladdress   string `json:"collateraladdress"`
+	Pubkeyoperator      string `json:"pubkeyoperator"`
+}
+
+func FetchAllowedList(baseURL, user, pass string) (map[string][]string, error) {
 	reqBody := []byte(`{"method": "masternodelist", "params": []}`)
 	req, err := http.NewRequest("POST", baseURL, bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -46,25 +63,22 @@ func fetchAllowedList(baseURL, user, pass string) (map[string][]string, error) {
 	}
 
 	allowedList := make(map[string][]string)
-	for _, node := range masternodeResp {
-		if node.Status == "ENABLED" {
-			hostname, port, err := splitAddress(node.Address)
-			if err != nil {
-				log.Printf("skipping invalid address %s: %v", node.Address, err)
-				continue
-			}
-			allowedList[hostname] = append(allowedList[hostname], port)
+	for _, mn := range masternodeResp.Result {
+		if mn.Status != "ENABLED" {
+			log.Printf("skipping disabled node '%s'", mn.Address)
+			continue
 		}
+
+		parts := strings.Split(mn.Address, ":")
+		if len(parts) != 2 {
+			log.Printf("skipping invalid address '%s': %v", mn.Address, err)
+			continue
+		}
+
+		hostname := parts[0]
+		port := parts[1]
+		allowedList[hostname] = append(allowedList[hostname], port)
 	}
 
 	return allowedList, nil
-}
-
-func splitAddress(address string) (string, string, error) {
-	var hostname, port string
-	_, err := fmt.Sscanf(address, "%s:%s", &hostname, &port)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid address format: %v", err)
-	}
-	return hostname, port, nil
 }

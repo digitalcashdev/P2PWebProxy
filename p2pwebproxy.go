@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 
 	"github.com/coder/websocket"
 )
@@ -22,14 +23,99 @@ func init() {
 	var err error
 
 	// TODO update occasionally
-	rpcURL := "https://rpc.digitalcash.dev/"
-	allowedList, err = fetchAllowedList(rpcURL, "user", "pass")
+	rpcURL := "https://trpc.digitalcash.dev/"
+	allowedList, err = FetchAllowedList(rpcURL, "api", validAccessToken)
 	if err != nil {
+		fmt.Println("error fetching list")
 		allowedList = map[string][]string{
 			"localhost":   {"8080", "9090"},
 			"example.com": {"80", "443"},
 		}
 	}
+
+	ips := getMapKeys(allowedList)
+	subnetGroups := groupBySubnet24(ips)
+	subnets := []string{}
+	for subnet := range subnetGroups {
+		subnets = append(subnets, subnet)
+	}
+	sortSubnets(subnets)
+	for _, subnet := range subnets {
+		ipList := subnetGroups[subnet]
+		ip := ipList[0]
+		ports := allowedList[ip]
+		if len(ipList) == 1 {
+			fmt.Printf("   1: %s:%s\n", ip, ports[0])
+			continue
+		}
+
+		fmt.Printf(" %3d: %s:%s\n", len(ipList), ip, ports[0])
+		ipList = ipList[1:]
+		for _, ip := range ipList {
+			ports := allowedList[ip]
+			fmt.Printf("      %s:%s\n", ip, ports[0])
+		}
+	}
+}
+
+func groupBySubnet24(ips []string) map[string][]string {
+	subnetMap := make(map[string][]string)
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			fmt.Printf("Invalid IP address: %s\n", ipStr)
+			continue
+		}
+		// Convert IP to a /24 subnet by zeroing the last byte
+		subnet := fmt.Sprintf("%d.%d.%d.0/24", ip[12], ip[13], ip[14])
+		subnetMap[subnet] = append(subnetMap[subnet], ipStr)
+	}
+
+	return subnetMap
+}
+
+func getMapKeys(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// func sortIPs(ips []string) []string {
+//      sort.Slice(ips, func(i, j int) bool {
+//              ip1 := net.ParseIP(ips[i])
+//              ip2 := net.ParseIP(ips[j])
+//              return bytesCompare(ip1.To16(), ip2.To16())
+//      })
+//      return ips
+// }
+
+func sortSubnets(subnets []string) []string {
+	sort.Slice(subnets, func(i, j int) bool {
+		_, net1, err1 := net.ParseCIDR(subnets[i])
+		_, net2, err2 := net.ParseCIDR(subnets[j])
+
+		if err1 != nil || err2 != nil {
+			fmt.Printf("Invalid subnet: %s or %s\n", subnets[i], subnets[j])
+			return false
+		}
+
+		return bytesCompare(net1.IP.To16(), net2.IP.To16())
+	})
+	return subnets
+}
+
+func bytesCompare(b1, b2 []byte) bool {
+	for i := range b1 {
+		if b1[i] < b2[i] {
+			return true
+		} else if b1[i] > b2[i] {
+			return false
+		}
+	}
+	return false
 }
 
 func authorize(accessToken string) (string, error) {
@@ -47,25 +133,34 @@ func secureCompare(a, b string) bool {
 
 func Handler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	addCORS(w, r)
 
 	query := r.URL.Query()
 	accessToken := query.Get("access_token")
 	hostname := query.Get("hostname")
 	port := query.Get("port")
 
-	user, err := authorize(accessToken)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
+	if false {
+		user, err := authorize(accessToken)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		fmt.Println("dummy user", user)
 	}
-	fmt.Println("dummy user", user)
+	fmt.Println("AUTHORIZATION IS TURNED OFF")
 
 	if !isValidHostnamePort(hostname, port) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		fmt.Printf("not in mn list: %s:%s\n", hostname, port)
+		http.Error(w, "Forbidden: '%s:%s' not in mn list", http.StatusForbidden)
 		return
 	}
 
-	wsconn, err := websocket.Accept(w, r, nil)
+	wsconn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		// Required due to https://pkg.go.dev/github.com/coder/websocket#AcceptOptions
+		// (it's about restricting Origin verification, which we actively don't want)
+		InsecureSkipVerify: true,
+	})
 	if err != nil {
 		log.Println("Failed to upgrade to websocket:", err)
 		return
@@ -92,6 +187,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Total bytes transferred: %d\n", byteCounter.Count)
 }
 
+func AddCORSHandler(w http.ResponseWriter, r *http.Request) {
+	addCORS(w, r)
+	w.WriteHeader(http.StatusOK)
+}
+
+func addCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("origin")
+	fmt.Printf("Origin 1: '%s'\n", origin)
+	if len(origin) == 0 {
+		host := r.Host
+		if len(host) > 0 {
+			origin = "https://" + host
+		} else {
+			origin = "http://localhost"
+		}
+	}
+	fmt.Printf("Origin 2: '%s'\n", origin)
+
+	w.Header().Set("Access-Control-Allow-Origin", origin) // Replace with your desired origin
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+}
+
 func isValidHostnamePort(hostname, port string) bool {
 	allowedPorts, exists := allowedList[hostname]
 	if !exists {
@@ -115,10 +233,10 @@ func pipeWithCounter(src io.Reader, dst io.Writer, counter *ByteCounter, directi
 
 	log.Printf("Error during %s: %v\n", direction, err)
 	if closer, ok := src.(io.Closer); ok {
-		closer.Close()
+		_ = closer.Close()
 	}
 	if closer, ok := dst.(io.Closer); ok {
-		closer.Close()
+		_ = closer.Close()
 	}
 }
 
