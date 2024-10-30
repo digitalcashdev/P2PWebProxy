@@ -11,7 +11,9 @@ import (
 )
 
 type MasternodeResponse struct {
-	Result map[string]MasternodeInfo `json:"result"`
+	ID     *string                    `json:"id"`
+	Result *map[string]MasternodeInfo `json:"result"`
+	Error  *string                    `json:"error"`
 }
 
 type MasternodeInfo struct {
@@ -62,8 +64,15 @@ func FetchAllowedList(baseURL, user, pass string) (map[string][]string, error) {
 		return nil, fmt.Errorf("failed to decode response: %v", err)
 	}
 
+	if masternodeResp.Result == nil {
+		if masternodeResp.Error == nil {
+			return nil, fmt.Errorf("malformed rpc response for 'masternodelist'")
+		}
+		return nil, fmt.Errorf("%s", *masternodeResp.Error)
+	}
+
 	allowedList := make(map[string][]string)
-	for _, mn := range masternodeResp.Result {
+	for _, mn := range *masternodeResp.Result {
 		if mn.Status != "ENABLED" {
 			log.Printf("skipping disabled node '%s'", mn.Address)
 			continue
