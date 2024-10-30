@@ -19,18 +19,13 @@ var defaultAllowedPorts = []string{"80", "443"}
 
 var validAccessToken = "your_secret_access_token"
 
-func init() {
+func Init(rpcURL, user, pass string) (int, error) {
 	var err error
 
 	// TODO update occasionally
-	rpcURL := "https://trpc.digitalcash.dev/"
-	allowedList, err = FetchAllowedList(rpcURL, "api", validAccessToken)
+	allowedList, err = FetchAllowedList(rpcURL, user, pass)
 	if err != nil {
-		fmt.Println("error fetching list")
-		allowedList = map[string][]string{
-			"localhost":   {"8080", "9090"},
-			"example.com": {"80", "443"},
-		}
+		return 0, err
 	}
 
 	ips := getMapKeys(allowedList)
@@ -56,6 +51,8 @@ func init() {
 			fmt.Printf("      %s:%s\n", ip, ports[0])
 		}
 	}
+
+	return len(allowedList), nil
 }
 
 func groupBySubnet24(ips []string) map[string][]string {
